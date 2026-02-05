@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+.venv/
+
+# Database
+db.sqlite3
+
+# Media Files (Don't upload test audio)
+media/
+
+# Environment Variables (Security)
+.env
