@@ -101,7 +101,7 @@ Manage a specific note using its UUID.
 
 ## ⚛️ React Integration Guide
 
-### 1. How to Upload (making it easy for frontend dev:] )
+### 1. How to Upload (making it easy for frontend dev :D )
 Since this operation involves binary files, you cannot  send a generic JSON object. Use the helper function below.
 
 ```javascript
@@ -151,3 +151,4 @@ The API guarantees `action_items` is always an array (List), so you can safely `
   <p className="text-gray-500">No action items detected yet.</p>
 )}
 ```
+
