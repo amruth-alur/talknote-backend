@@ -1,154 +1,276 @@
-# 📘 TalkNote API Documentation
+# TalkNote Backend
 
-**Base URL:** `http://127.0.0.1:8000/api`  
-**Current Version:** `v1`  
-**Authentication:** Open (CORS enabled for `localhost:5173`)
+TalkNote backend is a Django REST API for authenticated voice-note capture and AI-assisted note enrichment.
 
----
+It provides:
+- Email/password authentication with JWT
+- User-scoped notes CRUD
+- Audio upload support
+- Whisper-based transcription
+- Gemini-based summary + action items extraction
 
-## 1. Create & Upload Voice Note
-This is the primary endpoint for uploading audio. It triggers the AI transcription process automatically upon upload.
+## Table of Contents
 
-* **Endpoint:** `/notes/`
-* **Method:** `POST`
-* **Content-Type:** `multipart/form-data`
+- Overview
+- Current Architecture
+- Project Structure
+- Requirements
+- Quick Start (Local)
+- Environment Variables
+- API Documentation
+- AI Processing Flow
+- Security Model
+- Testing
+- Logging and Observability
+- Deployment Checklist
+- Known Constraints and Next Improvements
+- Useful Commands
 
-> **⚠️ Crucial:** You must use a `FormData` object for the request body. Do not send raw JSON, as this endpoint requires binary file handling.
+## Overview
 
-### Request Body (FormData)
+The backend is implemented as a modular monolith with two feature apps:
+- `users`: authentication and profile operations
+- `api`: notes domain + AI services
 
-| Field | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `audio_file` | File | ✅ Yes | The audio file (`.mp3`, `.wav`, `.webm`, `.m4a`). |
-| `title` | String | ❌ No | User-defined title. Defaults to "New Voice Note". |
+The app enforces authenticated access to note operations and isolates each user's data through query filtering and owner-stamping during creation.
 
-### Response (201 Created)
-Returns the created note object. If the backend is connected to AI, the `transcript` field is populated immediately.
+## Current Architecture
 
-```json
-{
-    "id": "b4e0afad-0330-4522-a5c6-67bd7fafd839",
-    "title": "Project Brainstorming",
-    "audio_file": "[http://127.0.0.1:8000/media/voice_notes/recording.mp3](http://127.0.0.1:8000/media/voice_notes/recording.mp3)",
-    "transcript": "Okay, so for the new feature we need to...",
-    "summary": "",
-    "action_items": [],
-    "created_at": "2026-02-06T11:30:00Z"
-}
+### Runtime
+- Framework: Django 5.2 + Django REST Framework
+- Auth: `djangorestframework-simplejwt`
+- DB: SQLite (default in current settings)
+- Media storage: local filesystem (`media/`)
+- AI stack:
+	- Transcription: `openai-whisper`
+	- LLM analysis: `google-genai`
+
+### Request Path (Audio Note)
+1. Authenticated client sends `POST /api/notes/` with multipart audio.
+2. API saves note and attaches current user.
+3. Whisper transcribes uploaded file.
+4. Gemini analyzes transcript into JSON (`summary`, `action_items`).
+5. Note is updated with AI output and returned.
+
+## Project Structure
+
+```text
+core/
+	settings.py      # global config, JWT, CORS, logging
+	urls.py          # root routing
+users/
+	models.py        # custom User model (email login + UUID PK)
+	serializers.py   # register/login/profile/password serializers
+	views.py         # auth endpoints
+	urls.py          # /api/auth/* endpoints
+api/
+	models.py        # Note model
+	serializers.py   # Note serializer (AI fields read-only)
+	views.py         # NoteViewSet (user-scoped + AI flow)
+	services.py      # Whisper + Gemini service layer
+	urls.py          # /api/notes/* endpoints
 ```
 
----
+## Requirements
 
-## 2. List All Notes
-Fetch the history of all voice notes, sorted by newest first.
+- Python `>=3.10`
+- `uv` package manager
 
-* **Endpoint:** `/notes/`
-* **Method:** `GET`
+Dependencies are managed in `pyproject.toml`.
 
-### Response (200 OK)
-Returns an array of Note objects.
+## Quick Start (Local)
 
-```json
-[
-    {
-        "id": "b4e0afad-0330-4522-a5c6-67bd7fafd839",
-        "title": "Project Brainstorming",
-        "audio_file": "[http://127.0.0.1:8000/media/voice_notes/recording.mp3](http://127.0.0.1:8000/media/voice_notes/recording.mp3)",
-        "transcript": "Okay, so for the new feature...",
-        "created_at": "2026-02-06T11:30:00Z"
-    },
-    {
-        "id": "a1c2d3e4-1234-5678-b910-111213141516",
-        "title": "Grocery List",
-        "audio_file": "[http://127.0.0.1:8000/media/voice_notes/list.mp3](http://127.0.0.1:8000/media/voice_notes/list.mp3)",
-        "transcript": "Milk, eggs, and bread.",
-        "created_at": "2026-02-05T09:15:00Z"
-    }
-]
+1) Install dependencies
+
+```bash
+uv sync
 ```
 
----
+2) Create environment file
 
-## 3. Get / Update / Delete a Note
-Manage a specific note using its UUID.
-
-* **Endpoint:** `/notes/<id>/` 
-    * *Example:* `/notes/b4e0afad-0330.../`
-
-### Supported Methods
-
-| Method | Description | Payload Example |
-| :--- | :--- | :--- |
-| `GET` | Retrieve full details of one note. | N/A |
-| `PUT` / `PATCH` | Update details (e.g., manual transcript edit). | `{ "title": "Updated Title", "transcript": "Corrected text" }` |
-| `DELETE` | Permanently remove the note and audio file. | N/A |
-
----
-
-## 💾 Data Model Reference
-
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `id` | UUID (String) | Unique Identifier. |
-| `title` | String | Max 200 chars. |
-| `audio_file` | URL (String) | Full link to play the audio. |
-| `transcript` | String | The raw text generated by Whisper AI. |
-| `summary` | String | AI-generated summary. Default: `""`. |
-| `action_items` | Array of Strings | Extracted tasks. Default: `[]`. |
-| `created_at` | DateTime (ISO) | Timestamp of upload. |
-
----
-
-## ⚛️ React Integration Guide
-
-### 1. How to Upload (making it easy for frontend dev :D )
-Since this operation involves binary files, you cannot  send a generic JSON object. Use the helper function below.
-
-```javascript
-import axios from 'axios';
-
-const uploadVoiceNote = async (audioBlob) => {
-  // 1. Create the FormData package
-  const formData = new FormData();
-  
-  // 'audio_file' matches the API field name exactly
-  // 'recording.webm' is the filename the server will see
-  formData.append('audio_file', audioBlob, 'recording.webm');
-  
-  // Optional: Add title
-  formData.append('title', 'My New Recording');
-
-  try {
-    const response = await axios.post('[http://127.0.0.1:8000/api/notes/](http://127.0.0.1:8000/api/notes/)', formData, {
-      headers: {
-        // Axios sets the correct boundary automatically when it sees FormData
-        // Explicitly setting this helps prevent common boundary errors
-        'Content-Type': 'multipart/form-data', 
-      },
-    });
-    
-    console.log('Upload Success:', response.data);
-    return response.data;
-    
-  } catch (error) {
-    console.error('Upload Failed:', error.response?.data);
-  }
-};
+```bash
+cp .env.example .env
 ```
 
-### 2. How to Display Action Items (Safety)
-The API guarantees `action_items` is always an array (List), so you can safely `.map()` without checking for null.
+3) Run migrations
 
-```jsx
-// React Component Example
-{note.action_items.length > 0 ? (
-  <ul className="action-items-list">
-    {note.action_items.map((item, index) => (
-      <li key={index}>✅ {item}</li>
-    ))}
-  </ul>
-) : (
-  <p className="text-gray-500">No action items detected yet.</p>
-)}
+```bash
+uv run python manage.py migrate
+```
+
+4) Start server
+
+```bash
+uv run python manage.py runserver
+```
+
+5) (Optional) Create admin user
+
+```bash
+uv run python manage.py createsuperuser
+```
+
+## Environment Variables
+
+See `.env.example`.
+
+Minimum required values:
+- `DJANGO_SECRET_KEY`
+- `GEMINI_API_KEY`
+
+Recommended additional values (future-hardening):
+- `DEBUG`
+- `ALLOWED_HOSTS`
+- `CORS_ALLOWED_ORIGINS`
+
+## API Documentation
+
+Base URL (local): `http://localhost:8000`
+
+### Authentication Endpoints
+
+Prefix: `/api/auth/`
+
+- `POST /register/`
+	- Creates user and returns tokens + user profile
+- `POST /login/`
+	- Returns access/refresh tokens + user profile
+- `POST /token/refresh/`
+	- Returns new access token
+- `GET /me/`
+	- Returns current user profile
+- `PUT /me/`
+	- Updates `first_name`, `last_name`
+- `POST /change-password/`
+	- Requires `old_password`, `new_password`
+- `POST /logout/`
+	- Blacklists refresh token
+
+### Notes Endpoints
+
+Prefix: `/api/`
+
+- `GET /notes/`
+	- Lists notes owned by authenticated user
+- `POST /notes/` (multipart supported)
+	- Creates note
+	- If audio provided, triggers transcription + LLM analysis
+- DRF default detail endpoints also available (retrieve/update/delete)
+
+### Authentication Header
+
+Use Bearer token:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+## AI Processing Flow
+
+AI behavior is implemented in `api/services.py`:
+
+- Whisper model loads at module init (`base` model).
+- Transcription service:
+	- Reads audio from `MEDIA_ROOT`
+	- Returns transcript string or `None`
+- LLM service:
+	- Uses `genai.Client(api_key=GEMINI_API_KEY)`
+	- Calls `gemini-3.1-flash-lite`
+	- Enforces JSON output parsing
+	- Retries twice with short backoff
+	- Returns fallback payload on failure
+
+Debug-aware logging is enabled:
+- `DEBUG=True`: detailed exception stack traces
+- `DEBUG=False`: concise error/warning logs
+
+## Security Model
+
+Implemented protections:
+- JWT auth required by default in DRF settings
+- Notes queryset restricted to current user
+- Note owner assigned server-side (`serializer.save(user=request.user)`)
+- AI-generated fields are read-only in serializer:
+	- `transcript`
+	- `summary`
+	- `action_items`
+- Password validation uses Django validators
+- Refresh token rotation + blacklist enabled
+
+## Testing
+
+Run all tests:
+
+```bash
+uv run python manage.py test -v 2
+```
+
+Run by module:
+
+```bash
+uv run python manage.py test users -v 2
+uv run python manage.py test api -v 2
+```
+
+Current test coverage includes:
+- Registration, login, profile, password change, logout
+- Note creation with/without audio
+- Failure resilience for transcription and LLM paths
+- User-scoped notes listing
+
+## Logging and Observability
+
+Configured in `core/settings.py`:
+- Console handler
+- File handler at `logs/talknote.log`
+- App-specific loggers for `users` and `api`
+
+`logs/` is ignored by git.
+
+## Deployment Checklist
+
+Before production deployment:
+
+1. Set `DEBUG=False`
+2. Set secure `DJANGO_SECRET_KEY`
+3. Set `ALLOWED_HOSTS`
+4. Move from SQLite to PostgreSQL
+5. Configure static/media serving (CDN/object storage or Nginx)
+6. Run behind reverse proxy
+7. Use production WSGI/ASGI server
+8. Add HTTPS and security headers at edge
+9. Add request throttling/rate limits
+10. Add monitoring/alerting
+
+## Known Constraints and Next Improvements
+
+Current known constraints:
+- `DEBUG` is hardcoded `True` in settings (should be env-driven).
+- `ALLOWED_HOSTS` is hardcoded empty.
+- `CORS_ALLOWED_ORIGINS` is hardcoded list.
+- Note `user` field in model is nullable for compatibility, while app logic always sets owner.
+- Whisper loads on process start (can increase startup latency).
+
+Recommended next iteration:
+- Make `DEBUG`, `ALLOWED_HOSTS`, and `CORS_ALLOWED_ORIGINS` fully env-driven.
+- Offload AI work to background queue (Celery/RQ) for scalability.
+- Add throttling and stricter upload validation.
+- Add CI pipeline (lint + tests).
+
+## Useful Commands
+
+```bash
+# Health check
+uv run python manage.py check
+
+# Run app
+uv run python manage.py runserver
+
+# Run tests
+uv run python manage.py test -v 2
+
+# Migrations
+uv run python manage.py makemigrations
+uv run python manage.py migrate
 ```
 
