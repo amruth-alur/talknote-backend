@@ -8,5 +8,8 @@ dependencies = [
     "django>=5.2.11",
     "django-cors-headers>=4.9.0",
     "djangorestframework>=3.16.1",
+    "djangorestframework-simplejwt>=5.5.1",
+    "google-genai>=1.68.0",
     "openai-whisper>=20250625",
+    "python-dotenv>=1.2.2",
 ]

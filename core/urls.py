@@ -14,22 +14,29 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+"""
+TalkNote URL Configuration.
+
+URL Hierarchy:
+    /admin/          — Django admin
+    /api/auth/       — Authentication (register, login, profile, etc.)
+    /api/            — Core API (notes)
+"""
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework.routers import DefaultRouter
-from api.views import NoteViewSet
-
-# Create a router and register our viewset with it.
-router = DefaultRouter()
-router.register(r'notes', NoteViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include(router.urls)), # All API URLs start with /api/
+
+    # Auth endpoints: /api/auth/register/, /api/auth/login/, /api/auth/me/, etc.
+    path('api/auth/', include('users.urls')),
+
+    # Core API: /api/notes/
+    path('api/', include('api.urls')),
 ]
 
-# This helper allows us to serve the Audio files during development
+# Serve media files in development
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
