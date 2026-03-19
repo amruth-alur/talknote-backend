@@ -1,276 +1,256 @@
-# TalkNote Backend
+# 📘 TalkNote API Documentation
 
-TalkNote backend is a Django REST API for authenticated voice-note capture and AI-assisted note enrichment.
+**Base URL:** `http://127.0.0.1:8000/api`  
+**Current Version:** `v1` (URL path is not version-prefixed yet)  
+**Authentication:** JWT Bearer token required for all API endpoints except register/login/token refresh
 
-It provides:
-- Email/password authentication with JWT
-- User-scoped notes CRUD
-- Audio upload support
-- Whisper-based transcription
-- Gemini-based summary + action items extraction
+---
 
-## Table of Contents
+## 0. Authentication First (Required)
 
-- Overview
-- Current Architecture
-- Project Structure
-- Requirements
-- Quick Start (Local)
-- Environment Variables
-- API Documentation
-- AI Processing Flow
-- Security Model
-- Testing
-- Logging and Observability
-- Deployment Checklist
-- Known Constraints and Next Improvements
-- Useful Commands
+Before calling notes endpoints, obtain an access token.
 
-## Overview
+### Register
+- **Endpoint:** `/auth/register/`
+- **Method:** `POST`
+- **Content-Type:** `application/json`
 
-The backend is implemented as a modular monolith with two feature apps:
-- `users`: authentication and profile operations
-- `api`: notes domain + AI services
-
-The app enforces authenticated access to note operations and isolates each user's data through query filtering and owner-stamping during creation.
-
-## Current Architecture
-
-### Runtime
-- Framework: Django 5.2 + Django REST Framework
-- Auth: `djangorestframework-simplejwt`
-- DB: SQLite (default in current settings)
-- Media storage: local filesystem (`media/`)
-- AI stack:
-	- Transcription: `openai-whisper`
-	- LLM analysis: `google-genai`
-
-### Request Path (Audio Note)
-1. Authenticated client sends `POST /api/notes/` with multipart audio.
-2. API saves note and attaches current user.
-3. Whisper transcribes uploaded file.
-4. Gemini analyzes transcript into JSON (`summary`, `action_items`).
-5. Note is updated with AI output and returned.
-
-## Project Structure
-
-```text
-core/
-	settings.py      # global config, JWT, CORS, logging
-	urls.py          # root routing
-users/
-	models.py        # custom User model (email login + UUID PK)
-	serializers.py   # register/login/profile/password serializers
-	views.py         # auth endpoints
-	urls.py          # /api/auth/* endpoints
-api/
-	models.py        # Note model
-	serializers.py   # Note serializer (AI fields read-only)
-	views.py         # NoteViewSet (user-scoped + AI flow)
-	services.py      # Whisper + Gemini service layer
-	urls.py          # /api/notes/* endpoints
+```json
+{
+	"email": "user@example.com",
+	"password": "StrongPass123!",
+	"password_confirm": "StrongPass123!",
+	"first_name": "Amal",
+	"last_name": "K"
+}
 ```
 
-## Requirements
+### Login
+- **Endpoint:** `/auth/login/`
+- **Method:** `POST`
 
-- Python `>=3.10`
-- `uv` package manager
-
-Dependencies are managed in `pyproject.toml`.
-
-## Quick Start (Local)
-
-1) Install dependencies
-
-```bash
-uv sync
+```json
+{
+	"email": "user@example.com",
+	"password": "StrongPass123!"
+}
 ```
 
-2) Create environment file
-
-```bash
-cp .env.example .env
-```
-
-3) Run migrations
-
-```bash
-uv run python manage.py migrate
-```
-
-4) Start server
-
-```bash
-uv run python manage.py runserver
-```
-
-5) (Optional) Create admin user
-
-```bash
-uv run python manage.py createsuperuser
-```
-
-## Environment Variables
-
-See `.env.example`.
-
-Minimum required values:
-- `DJANGO_SECRET_KEY`
-- `GEMINI_API_KEY`
-
-Recommended additional values (future-hardening):
-- `DEBUG`
-- `ALLOWED_HOSTS`
-- `CORS_ALLOWED_ORIGINS`
-
-## API Documentation
-
-Base URL (local): `http://localhost:8000`
-
-### Authentication Endpoints
-
-Prefix: `/api/auth/`
-
-- `POST /register/`
-	- Creates user and returns tokens + user profile
-- `POST /login/`
-	- Returns access/refresh tokens + user profile
-- `POST /token/refresh/`
-	- Returns new access token
-- `GET /me/`
-	- Returns current user profile
-- `PUT /me/`
-	- Updates `first_name`, `last_name`
-- `POST /change-password/`
-	- Requires `old_password`, `new_password`
-- `POST /logout/`
-	- Blacklists refresh token
-
-### Notes Endpoints
-
-Prefix: `/api/`
-
-- `GET /notes/`
-	- Lists notes owned by authenticated user
-- `POST /notes/` (multipart supported)
-	- Creates note
-	- If audio provided, triggers transcription + LLM analysis
-- DRF default detail endpoints also available (retrieve/update/delete)
-
-### Authentication Header
-
-Use Bearer token:
+### Use access token
 
 ```http
 Authorization: Bearer <access_token>
 ```
 
-## AI Processing Flow
+---
 
-AI behavior is implemented in `api/services.py`:
+## 1. Create & Upload Voice Note
 
-- Whisper model loads at module init (`base` model).
-- Transcription service:
-	- Reads audio from `MEDIA_ROOT`
-	- Returns transcript string or `None`
-- LLM service:
-	- Uses `genai.Client(api_key=GEMINI_API_KEY)`
-	- Calls `gemini-3.1-flash-lite`
-	- Enforces JSON output parsing
-	- Retries twice with short backoff
-	- Returns fallback payload on failure
+Primary endpoint for uploading audio. If `audio_file` is included, backend automatically attempts transcription + AI analysis.
 
-Debug-aware logging is enabled:
-- `DEBUG=True`: detailed exception stack traces
-- `DEBUG=False`: concise error/warning logs
+- **Endpoint:** `/notes/`
+- **Method:** `POST`
+- **Auth:** ✅ Required
+- **Content-Type:** `multipart/form-data`
 
-## Security Model
+> **Important:** Use `FormData` for file upload. Do not send raw JSON for audio uploads.
 
-Implemented protections:
-- JWT auth required by default in DRF settings
-- Notes queryset restricted to current user
-- Note owner assigned server-side (`serializer.save(user=request.user)`)
-- AI-generated fields are read-only in serializer:
-	- `transcript`
-	- `summary`
-	- `action_items`
-- Password validation uses Django validators
-- Refresh token rotation + blacklist enabled
+### Request Body (FormData)
 
-## Testing
+| Field | Type | Required | Description |
+| :--- | :--- | :---: | :--- |
+| `audio_file` | File | ❌ No | Audio file (`.mp3`, `.wav`, `.webm`, `.m4a`). |
+| `title` | String | ❌ No | User-defined title. Defaults to `New Voice Note`. |
 
-Run all tests:
+### Response (201 Created)
 
-```bash
-uv run python manage.py test -v 2
+```json
+{
+	"id": "b4e0afad-0330-4522-a5c6-67bd7fafd839",
+	"title": "Project Brainstorming",
+	"audio_file": "http://127.0.0.1:8000/media/voice_notes/recording.mp3",
+	"transcript": "Okay, so for the new feature we need to...",
+	"summary": "Team discussed the new feature scope.",
+	"action_items": ["Draft API contract", "Schedule follow-up"],
+	"created_at": "2026-03-19T11:30:00Z"
+}
 ```
 
-Run by module:
+If AI fails (rate limit, model issues, etc.), note creation still succeeds and fields may remain empty.
+
+---
+
+## 2. List All Notes (Current User Only)
+
+Fetches the authenticated user's notes only, sorted by newest first.
+
+- **Endpoint:** `/notes/`
+- **Method:** `GET`
+- **Auth:** ✅ Required
+
+### Response (200 OK)
+
+```json
+[
+	{
+		"id": "b4e0afad-0330-4522-a5c6-67bd7fafd839",
+		"title": "Project Brainstorming",
+		"audio_file": "http://127.0.0.1:8000/media/voice_notes/recording.mp3",
+		"transcript": "Okay, so for the new feature...",
+		"summary": "Team discussed feature scope.",
+		"action_items": ["Send recap"],
+		"created_at": "2026-03-19T11:30:00Z"
+	}
+]
+```
+
+---
+
+## 3. Get / Update / Delete a Note
+
+Manage one note by UUID.
+
+- **Endpoint:** `/notes/<id>/`
+	- Example: `/notes/b4e0afad-0330-4522-a5c6-67bd7fafd839/`
+- **Auth:** ✅ Required
+
+### Supported Methods
+
+| Method | Description | Payload Example |
+| :--- | :--- | :--- |
+| `GET` | Retrieve full details for one note. | N/A |
+| `PUT` / `PATCH` | Update note fields (`title`, `audio_file`). | `{ "title": "Updated Title" }` |
+| `DELETE` | Permanently remove the note record. | N/A |
+
+> **Security note:** `transcript`, `summary`, and `action_items` are read-only from API input and are managed by backend AI flow.
+
+---
+
+## 4. User Profile & Session Endpoints
+
+All below are under `/api/auth/`.
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/me/` | `GET` | Get current profile |
+| `/me/` | `PUT` | Update `first_name`, `last_name` |
+| `/change-password/` | `POST` | Change password using old+new password |
+| `/logout/` | `POST` | Blacklist refresh token |
+| `/token/refresh/` | `POST` | Refresh access token |
+
+---
+
+## 💾 Data Model Reference (Note)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | UUID (String) | Unique identifier |
+| `title` | String | Max 200 chars |
+| `audio_file` | URL (String or null) | Uploaded audio path |
+| `transcript` | String or null | Whisper-generated text |
+| `summary` | String or null | Gemini-generated summary |
+| `action_items` | Array | Gemini-generated tasks |
+| `created_at` | DateTime (ISO) | Creation timestamp |
+
+---
+
+## ⚛️ React Integration Guide
+
+### 1) Upload Voice Note (FormData)
+
+```javascript
+import axios from 'axios';
+
+const API_BASE = 'http://127.0.0.1:8000/api';
+
+export async function uploadVoiceNote(audioBlob, accessToken) {
+	const formData = new FormData();
+	formData.append('audio_file', audioBlob, 'recording.webm');
+	formData.append('title', 'My New Recording');
+
+	const response = await axios.post(`${API_BASE}/notes/`, formData, {
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			'Content-Type': 'multipart/form-data'
+		}
+	});
+
+	return response.data;
+}
+```
+
+### 2) Display Action Items Safely
+
+```jsx
+{note.action_items?.length > 0 ? (
+	<ul>
+		{note.action_items.map((item, index) => (
+			<li key={index}>✅ {item}</li>
+		))}
+	</ul>
+) : (
+	<p>No action items detected yet.</p>
+)}
+```
+
+### 3) Refresh Access Token
+
+```javascript
+const response = await axios.post('http://127.0.0.1:8000/api/auth/token/refresh/', {
+	refresh: refreshToken
+});
+const newAccessToken = response.data.access;
+```
+
+---
+
+## 🔒 Security & Behavior Notes
+
+- Global DRF default permission is `IsAuthenticated`.
+- Notes list is user-scoped on backend (`request.user` filter).
+- Owner is set server-side during note creation.
+- Logout blacklists refresh tokens.
+- AI processing failures are logged but do not fail note creation.
+
+---
+
+## 🧪 Testing
 
 ```bash
+uv run python manage.py check
 uv run python manage.py test users -v 2
 uv run python manage.py test api -v 2
+uv run python manage.py test -v 2
 ```
 
-Current test coverage includes:
-- Registration, login, profile, password change, logout
-- Note creation with/without audio
-- Failure resilience for transcription and LLM paths
-- User-scoped notes listing
+---
 
-## Logging and Observability
-
-Configured in `core/settings.py`:
-- Console handler
-- File handler at `logs/talknote.log`
-- App-specific loggers for `users` and `api`
-
-`logs/` is ignored by git.
-
-## Deployment Checklist
-
-Before production deployment:
-
-1. Set `DEBUG=False`
-2. Set secure `DJANGO_SECRET_KEY`
-3. Set `ALLOWED_HOSTS`
-4. Move from SQLite to PostgreSQL
-5. Configure static/media serving (CDN/object storage or Nginx)
-6. Run behind reverse proxy
-7. Use production WSGI/ASGI server
-8. Add HTTPS and security headers at edge
-9. Add request throttling/rate limits
-10. Add monitoring/alerting
-
-## Known Constraints and Next Improvements
-
-Current known constraints:
-- `DEBUG` is hardcoded `True` in settings (should be env-driven).
-- `ALLOWED_HOSTS` is hardcoded empty.
-- `CORS_ALLOWED_ORIGINS` is hardcoded list.
-- Note `user` field in model is nullable for compatibility, while app logic always sets owner.
-- Whisper loads on process start (can increase startup latency).
-
-Recommended next iteration:
-- Make `DEBUG`, `ALLOWED_HOSTS`, and `CORS_ALLOWED_ORIGINS` fully env-driven.
-- Offload AI work to background queue (Celery/RQ) for scalability.
-- Add throttling and stricter upload validation.
-- Add CI pipeline (lint + tests).
-
-## Useful Commands
+## 🚀 Local Setup
 
 ```bash
-# Health check
-uv run python manage.py check
-
-# Run app
-uv run python manage.py runserver
-
-# Run tests
-uv run python manage.py test -v 2
-
-# Migrations
-uv run python manage.py makemigrations
+uv sync
+cp .env.example .env
 uv run python manage.py migrate
+uv run python manage.py runserver
 ```
+
+Required `.env` keys:
+- `DJANGO_SECRET_KEY`
+- `GEMINI_API_KEY`
+
+---
+
+## ⚠️ Current Constraints
+
+- `DEBUG=True` is currently hardcoded in settings.
+- `ALLOWED_HOSTS` is currently empty.
+- `CORS_ALLOWED_ORIGINS` is currently hardcoded for localhost ports.
+- SQLite is used by default; use PostgreSQL for production.
+
+---
+
+## ✅ Stability Baseline
+
+Validated baseline (all tests passing) exists in git history with stabilization, log-ignore, and documentation commits.
+
 
